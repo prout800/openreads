@@ -564,10 +564,12 @@ class StatsBloc extends Bloc<StatsEvent, StatsState> {
   ) {
     List<BookReadStat> bookReadStats = List<BookReadStat>.empty(growable: true);
 
+    final smoothedPagesByMonth = _getSmoothedPagesByMonth(books, bookType);
+
     // Calculate stats for all time
     bookReadStats.add(
       BookReadStat(
-        values: _getFinishedPagesInSpecificMonths(books, bookType, null),
+        values: _aggregateSmoothedPagesByMonth(smoothedPagesByMonth, null),
       ),
     );
 
@@ -576,37 +578,83 @@ class StatsBloc extends Bloc<StatsEvent, StatsState> {
       bookReadStats.add(
         BookReadStat(
           year: year,
-          values: _getFinishedPagesInSpecificMonths(books, bookType, year),
+          values: _aggregateSmoothedPagesByMonth(smoothedPagesByMonth, year),
         ),
       );
     }
     return bookReadStats;
   }
 
-  List<int> _getFinishedPagesInSpecificMonths(
+  Map<String, double> _getSmoothedPagesByMonth(
     List<Book> books,
     BookFormat? bookType,
-    int? year,
   ) {
-    List<int> finishedPagesByMonth = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    final pagesByMonth = <String, double>{};
 
     for (Book book in books) {
       if (bookType != null && book.bookFormat != bookType) {
         continue;
       }
 
-      for (final reading in book.readings) {
-        if (reading.finishDate != null && book.pages != null) {
-          if (year == null || reading.finishDate!.year == year) {
-            final finishMonth = reading.finishDate!.month;
+      if (book.pages == null || book.pages! == 0) {
+        continue;
+      }
 
-            finishedPagesByMonth[finishMonth - 1] += book.pages!;
-          }
+      for (final reading in book.readings) {
+        final finishDate = reading.finishDate;
+        if (finishDate == null) {
+          continue;
+        }
+
+        var startDate = reading.startDate ?? finishDate;
+        if (startDate.isAfter(finishDate)) {
+          startDate = finishDate;
+        }
+
+        final days = finishDate.difference(startDate).inDays + 1;
+        final pagesPerDay = book.pages! / days;
+
+        for (var day = 0; day < days; day++) {
+          final date = startDate.add(Duration(days: day));
+          final key = '${date.year}-${date.month}';
+          pagesByMonth[key] = (pagesByMonth[key] ?? 0) + pagesPerDay;
         }
       }
     }
 
-    return finishedPagesByMonth;
+    return pagesByMonth;
+  }
+
+  List<int> _aggregateSmoothedPagesByMonth(
+    Map<String, double> pagesByMonth,
+    int? year,
+  ) {
+    final values = List<double>.filled(12, 0.0);
+
+    pagesByMonth.forEach((key, value) {
+      final separatorIndex = key.indexOf('-');
+      final keyYear = int.parse(key.substring(0, separatorIndex));
+      final month = int.parse(key.substring(separatorIndex + 1));
+
+      if (year == null || keyYear == year) {
+        values[month - 1] += value;
+      }
+    });
+
+    final rounded = values.map((value) => value.floor()).toList();
+    final totalRounded = values.fold(0.0, (sum, value) => sum + value).round();
+    final remaining =
+        totalRounded - rounded.fold(0, (sum, value) => sum + value);
+
+    final sortedByFraction = values.asMap().entries.toList()
+      ..sort((a, b) =>
+          (b.value - b.value.floor()).compareTo(a.value - a.value.floor()));
+
+    for (var i = 0; i < remaining && i < sortedByFraction.length; i++) {
+      rounded[sortedByFraction[i].key] += 1;
+    }
+
+    return rounded;
   }
 
   List<BookReadStat> _getFinishedBooksByMonth(
