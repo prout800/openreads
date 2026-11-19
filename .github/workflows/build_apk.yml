@@ -1,0 +1,76 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+  DO_NOT_TRACK: '1'
+
+jobs:
+  android_apk:
+    name: Android APK
+    runs-on: ubuntu-26.04
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v7
+
+    - name: Set up Java
+      uses: actions/setup-java@v6
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+        cache: 'gradle'
+
+    - name: Set up Flutter version
+      run: echo "VERSION=$(cat .flutter-version)" >> $GITHUB_ENV
+
+    - name: Set up Flutter
+      uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+      with:
+        flutter-version: ${{ env.VERSION }}
+        cache: true
+        pub-cache: true
+
+    - name: Disable analytics
+      run: |
+        flutter config --no-analytics
+        dart --disable-analytics
+
+    - name: Get Flutter packages
+      run: flutter pub get
+
+    - name: Set up release signing
+      if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+      env:
+        ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      run: |
+        echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/upload-key.jks
+        printf 'storeFile=upload-key.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+          "$ANDROID_STORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" \
+          > android/key.properties
+
+    - name: Build APK
+      run: |
+        if [ -f android/key.properties ]; then
+          flutter build apk --release
+        else
+          flutter build apk --debug
+        fi
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v6
+      with:
+        name: openreads-apk
+        path: build/app/outputs/flutter-apk/*.apk
+        retention-days: 30
