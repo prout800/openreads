@@ -48,13 +48,16 @@ jobs:
       run: flutter pub get
 
     - name: Set up release signing
-      if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
       env:
         ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
         ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       run: |
+        if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+          echo "No release keystore configured, falling back to a debug APK"
+          exit 0
+        fi
         echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/upload-key.jks
         printf 'storeFile=upload-key.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
           "$ANDROID_STORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" \
